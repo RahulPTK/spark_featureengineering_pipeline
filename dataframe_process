@@ -1,0 +1,191 @@
+import pyspark
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.appName("Pyspark_SampleProject").getOrCreate()
+
+from pyspark.sql.types import (StructType, StructField, DateType, BooleanType, DoubleType, IntegerType, Stri
+ngType, TimestampType)
+crimes_schema = StructType([StructField("ID", StringType(), True),
+ StructField("CaseNumber", StringType(), True),
+ StructField("Date", StringType(), True ),
+ StructField("Block", StringType(), True),
+ StructField("IUCR", StringType(), True),
+ StructField("PrimaryType", StringType(), True ),
+ StructField("Description", StringType(), True ),
+ StructField("LocationDescription", StringType(), True ),
+ StructField("Arrest", BooleanType(), True),
+ StructField("Domestic", BooleanType(), True),
+ StructField("Beat", StringType(), True),
+ StructField("District", StringType(), True),
+ StructField("Ward", StringType(), True),
+ StructField("CommunityArea", StringType(), True),
+ StructField("FBICode", StringType(), True ),
+ StructField("XCoordinate", DoubleType(), True),
+ StructField("YCoordinate", DoubleType(), True ),
+ StructField("Year", IntegerType(), True),
+ StructField("UpdatedOn", DateType(), True ),
+ StructField("Latitude", DoubleType(), True),
+ StructField("Longitude", DoubleType(), True),
+ StructField("Location", StringType(), True )
+ ])
+ 
+ 
+ crimes = spark.read.csv("file:path",
+ header = True,inferSchema=True)
+ 
+ print(" The crimes dataframe has {} records".format(crimes.count()))
+ 
+from datetime import datetime
+from pyspark.sql.functions import col,udf
+myfunc = udf(lambda x: datetime.strptime(x, '%m/%d/%Y %H:%M:%S'), TimestampType())
+df = crimes.withColumn('Date_time', myfunc(col('Date'))).drop("Date")
+df.select(df["Date_time"]).show(5)
+
+# Calculate statistics of numeric and string columns
+crimes.select(["Latitude","Longitude","Year","X_Coordinate","Y_Coordinate"]).describe().show()
+
+from pyspark.sql.functions import format_number
+result = crimes.select(["Latitude","Longitude","Year","X_Coordinate","Y_Coordinate"]).describe()
+result.select(result['summary'],
+ format_number(result['Latitude'].cast('float'),2).alias('Latitude'),
+ format_number(result['Longitude'].cast('float'),2).alias('Longitude'),
+ result['Year'].cast('int').alias('year'),
+ format_number(result['X_Coordinate'].cast('float'),2).alias('X_Coordinate'),
+ format_number(result['Y_Coordinate'].cast('float'),2).alias('Y_Coordinate')
+ ).show()
+
+
+crimes.select("Primary_Type").distinct().count()
+
+crimes.where(crimes["Primary_Type"] == "HOMICIDE").count()
+
+ crimes.filter((crimes["Primary_Type"] == "ASSAULT") & (crimes["Domestic"] == "True")).count()
+
+# Create a new column with withColumn
+lat_max = crimes.agg({"Latitude" : "max"}).collect()[0][0]
+print("The maximum latitude values is {}".format(lat_max))
+
+from pyspark.sql.functions import max,min
+df.select(max("X_Coordinate"),min("X_Coordinate")).show()
+from pyspark.sql.functions import mean
+df.select(mean("Latitude").alias("Mean_Latitude")).show()
+
+df.groupBy("Year").count().orderBy("Year").show()
+# df.groupBy("Year").count().collect()
+
+import pandas as pd
+import matplotlib.pyplot as plt
+%matplotlib inline
+from pyspark.sql.functions import month
+monthdf = df.withColumn("Month",month("Date_time"))
+monthCounts = monthdf.select("Month").groupBy("Month").count()
+monthCounts = monthCounts.collect()
+months = [item[0] for item in monthCounts]
+count = [item[1] for item in monthCounts]
+crimes_per_month = {"month":months, "crime_count": count}
+crimes_per_month = pd.DataFrame(crimes_per_month)
+crimes_per_month = crimes_per_month.sort_values(by = "month")
+crimes_per_month.plot(figsize = (20,10), kind = "line", x = "month", y = "crime_count",
+ color = "red", linewidth = 8, legend = False)
+plt.xlabel("Month", fontsize = 18)
+plt.ylabel("Number of Crimes", fontsize = 18)
+plt.title("Number of Crimes Per Month", fontsize = 28)
+plt.xticks(size = 18)
+plt.yticks(size = 18)
+plt.show()
+
+from pyspark.sql.functions import month
+monthdf = df.withColumn("Month",month("Date_time"))
+monthdf.select("Year", "Month").groupBy("Year", "Month").count().orderBy("Year", "Month").show()
+
+from pyspark.sql.functions import col
+crimes.groupBy("Location_Description").count().orderBy(col("count").desc()).show()
+
+crime_location = crimes.groupBy("Location_Description").count().collect()
+location = [item[0] for item in crime_location]
+count = [item[1] for item in crime_location]
+crime_location = {"location" : location, "count": count}
+crime_location = pd.DataFrame(crime_location)
+crime_location = crime_location.sort_values(by = "count", ascending = False)
+crime_location = crime_location.iloc[:20]
+myplot = crime_location .plot(figsize = (20,20), kind = "barh", color = "#b35900", width = 0.8,
+ x = "location", y = "count", legend = False)
+myplot.invert_yaxis()
+plt.xlabel("Number of crimes", fontsize = 28)
+plt.ylabel("Crime Location", fontsize = 28)
+plt.title("Number of Crimes By Location", fontsize = 36)
+plt.xticks(size = 24)
+plt.yticks(size = 24)
+plt.show()
+
+from pyspark.sql.functions import date_format
+df = df.withColumn("DayOfWeek", date_format("Date_time","E")).\
+ withColumn("DayOfWeek_number", date_format("Date_time","u")).\
+ withColumn("HourOfDay", date_format("Date_time","H"))
+df.groupBy(["DayOfWeek", "DayOfWeek_number"]).count().show()
+
+weekDaysCount = df.groupBy(["DayOfWeek", "DayOfWeek_number"]).count().collect()
+days = [item[0] for item in weekDaysCount]
+count = [item[2] for item in weekDaysCount]
+day_number = [item[1] for item in weekDaysCount]
+crime_byDay = {"days" : days, "count": count, "day_number": day_number}
+crime_byDay = pd.DataFrame(crime_byDay)
+crime_byDay = crime_byDay.sort_values(by = "day_number", ascending = True)
+crime_byDay.plot(figsize = (20,10), kind = "line", x = "days", y = "count",
+ color = "red", linewidth = 8, legend = False)
+plt.ylabel("Number of Crimes", fontsize = 18)
+plt.xlabel("")
+plt.title("Number of Crimes by Day", fontsize = 28)
+plt.xticks(size = 18)
+plt.yticks(size = 18)
+plt.show()
+
+temp = df.filter(df["Domestic"] == "true")
+temp = temp.select(df['HourOfDay'].cast('int').alias('HourOfDay'))
+temp.groupBy(["HourOfDay"]).count().show()
+
+temp = df.filter(df["Domestic"] == "true")
+temp = temp.select(df['HourOfDay'].cast('int').alias('HourOfDay'))
+hourlyCount = temp.groupBy(["HourOfDay"]).count().collect()
+hours = [item[0] for item in hourlyCount]
+count = [item[1] for item in hourlyCount]
+crime_byHour = {"count": count, "hours": hours}
+crime_byHour = pd.DataFrame(crime_byHour)
+crime_byHour = crime_byHour.sort_values(by = "hours", ascending = True)
+crime_byHour.plot(figsize = (20,10), kind = "line", x = "hours", y = "count",
+ color = "green", linewidth = 5, legend = False)
+plt.ylabel("Number of Domestic Crimes", fontsize = 18)
+plt.xlabel("Hour", fontsize = 18)
+plt.title("Number of domestic crimes by hour", fontsize = 28)
+plt.xticks(size = 18)
+plt.yticks(size = 18)
+plt.show()
+
+temp = df.filter(df["Domestic"] == "true")
+temp = temp.select("DayOfWeek", df['HourOfDay'].cast('int').alias('HourOfDay'))
+temp.groupBy(["DayOfWeek","HourOfDay"]).count().show()
+
+import seaborn as sns
+temp = df.filter(df["Domestic"] == "true")
+temp = temp.select("DayOfWeek", df['HourOfDay'].cast('int').alias('HourOfDay'))
+hourlyCount = temp.groupBy(["DayOfWeek","HourOfDay"]).count().collect()
+days = [item[0] for item in hourlyCount]
+hours = [item[1] for item in hourlyCount]
+count = [item[2] for item in hourlyCount]
+crime_byHour = {"count": count, "hours": hours, "days": days}
+crime_byHour = pd.DataFrame(crime_byHour)
+crime_byHour = crime_byHour.sort_values(by = "hours", ascending = True)
+import seaborn as sns
+g = sns.FacetGrid(crime_byHour, hue="days", size = 12)
+g.map(plt.plot, "hours", "count", linewidth = 3)
+g.add_legend()
+plt.ylabel("Number of Domestic Crimes", fontsize = 18)
+plt.xlabel("Hour", fontsize = 18)
+plt.title("Number of domestic crimes by day and hour", fontsize = 28)
+plt.xticks(size = 18)
+plt.yticks(size = 18)
+plt.show()
+
+
+
+
+

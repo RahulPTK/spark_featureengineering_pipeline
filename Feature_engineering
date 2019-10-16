@@ -1,0 +1,125 @@
+In order to have a cleaner and more industrializable code, it may be useful to create a pipeline object that handles feature engineering. 
+suppose we have this type of dataframe.
+
+from pyspark.sql import Row
+sales = [17, 22, 48, 150]
+date_col = ['2018-12-22', '2017-01-08', '2015-08-25', '2015-03-12']l = [(x,y) for x,y in zip(date_col, sales)]
+rdd = sc.parallelize(l)
+sales = rdd.map(lambda x: Row(date=x[0], sales=int(x[1])))
+df = sqlContext.createDataFrame(sales)
+
+df.show()
+
+Then we want to create variables derived from the date. Most of the time, we’ll do something like this:
+
+
+from pyspark.sql import functions as F
+
+df = (df
+    .withColumn("dayofmonth", F.dayofmonth(F.col('date_col'))
+        )
+    .withColumn('Year', F.year(F.col('date_col')))
+    .withColumn('MonthQuarter', F.when((df[date_col] <= 8), 0)
+                               .otherwise(F.when((df['date_col'] <= 16), 1)
+                                .otherwise(F.when((df['date_col'] <= 24), 2)
+                                 .otherwise(3))))
+    )
+    
+    
+Now, we want to integrate the creation of these variables into a spark’s pipeline and, in addition, 
+put some safeguards in place before their calculations. To do this, we will create a class that will inherit 
+of the Transformermethod of spark’s pipelines and we will add a function that will check the inputs before the calculation.    
+
+from pyspark.ml.pipeline import Transformer
+
+class DayExtractor(Transformer):
+    # Day extractor herit of property of Transformer 
+    def __init__(self, inputCol, outputCol='dayofmonth'):
+        self.inputCol = inputCol #the name of your columns
+        self.outputCol = outputCol #the name of your output column
+    def this():
+        #define an unique ID
+        this(Identifiable.randomUID("dayextractor"))
+    def copy(extra):
+        defaultCopy(extra)
+    def check_input_type(self, schema):
+        field = schema[self.inputCol]
+        #assert that field is a datetype 
+        if (field.dataType != DateType()):
+            raise Exception('DayExtractor input type %s did not match input type DateType' % field.dataType)
+    def _transform(self, df):
+        self.check_input_type(df.schema)
+        return df.withColumn(self.outputCol, F.dayofmonth(df[self.inputCol]))
+        
+        
+        
+Our class inherited the properties of the Spark Transformer which allows us to insert it into a pipeline.
+this function allows us to make our object identifiable and immutable within our pipeline by assigning it a unique ID
+defaultCopy Tries to create a new instance with the same UID. Then it copies the embedded and extra parameters over and returns the new instance.
+Then the check_input_type function is used to check that the input field is in the right format and finally we simply implement the SQL Functions F.day of month to return our columns.
+we will reuse this skeleton to create the other variables we need, the only change to make will be the ID and the _transform function
+
+class MonthQuarterExtractor(Transformer):
+    def __init__(self, inputCol='day', outputCol='monthquarter'):
+        self.inputCol = inputCol
+        self.outputCol = outputCol
+        
+    def this():
+        this(Identifiable.randomUID("monthquarterextractor"))
+    def copy(extra):
+        defaultCopy(extra)
+    
+    def check_input_type(self, schema):
+        field = schema[self.inputCol]
+        if (field.dataType != IntegerType()):
+              raise Exception('monthQuarterExtractor input type %s did not match input type IntegerType' % field.dataType)
+                
+    def _transform(self, df):
+        self.check_input_type(df.schema)
+        return df.withColumn(self.outputCol, F.when((df[self.inputCol] <= 8), 0)
+                               .otherwise(F.when((df[self.inputCol] <= 16), 1)
+                                .otherwise(F.when((df[self.inputCol] <= 24), 2)
+                                 .otherwise(3))))
+                                 
+                                 
+                                 
+We have defined MonthQuarterExtractor that have the same skeleton, it may seem like a verbose compared to the withColumn method but much cleaner!
+Finally we do the same for the year variable.
+
+
+class YearExtractor(Transformer):
+    def __init__(self, inputCol, outputCol='year'):
+        self.inputCol = inputCol
+        self.outputCol = outputCol
+        
+    def this():
+        this(Identifiable.randomUID("yearextractor"))
+    def copy(extra):
+            defaultCopy(extra)
+    def check_input_type(self, schema):
+            field = schema[self.inputCol]
+            if (field.dataType != DateType()):
+                    raise Exception('YearExtractor input type %s did not match input type DateType' % field.dataType)
+    def _transform(self, df):
+    self.check_input_type(df.schema)
+            return df.withColumn(self.outputCol, F.year(df[self.inputCol]))
+            
+            
+Now let’s integrate them into our pipeline.
+
+from pyspark.ml import Pipeline
+df = df.withColumn('date', F.col('date').cast(DateType()))
+#definition of object 
+dex = DayExtractor(inputCol='date')
+yex = YearExtractor(inputCol='date')
+mqex = MonthQuarterExtractor(inputCol = "dayofmonth")
+FeaturesPipeline =  Pipeline(stages=[dex, yex, mqex])
+Featpip = FeaturesPipeline.fit(df)
+#apply transform method and voilà ! 
+df= Featpip.transform(df)
+
+
+The trick is done, we created a “customs” transformer and inserted it into a spark pipeline. It is also possible to 
+insert them into a pipeline with other objects, a vector assembler, a string indexer or other.
+
+https://towardsdatascience.com/unittesting-apache-spark-applications-b9a46e319ce3
